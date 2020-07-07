@@ -1,24 +1,10 @@
-import torch
-import torch.nn as nn
-import torch.nn.init as init
-import torch.nn.functional as F
-from torch.utils.data import DataLoader
-import math
 import os
-import sys
 from dataset import MyDataset
 import numpy as np
-import time
 from model import LipNet
-import torch.optim as optim
-import re
-import json
 import tempfile
-import shutil
 import cv2
 import face_alignment
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
 def get_position(size, padding=0.25):
@@ -94,7 +80,8 @@ def transformation_from_points(points1, points2):
                       np.matrix([0., 0., 1.])])
 
 
-def load_video(file):
+def load_video(file, device='cuda'):
+    print(device)
     p = tempfile.mkdtemp()
     cmd = 'ffmpeg -i \'{}\' -qscale:v 2 -r 25 \'{}/%d.jpg\''.format(file, p)
     os.system(cmd)
@@ -105,10 +92,10 @@ def load_video(file):
     array = [cv2.imread(os.path.join(p, file)) for file in files]
 
     array = list(filter(lambda im: not im is None, array))
-    #array = [cv2.resize(im, (100, 50), interpolation=cv2.INTER_LANCZOS4) for im in array]
+    # array = [cv2.resize(im, (100, 50), interpolation=cv2.INTER_LANCZOS4) for im in array]
 
     fa = face_alignment.FaceAlignment(
-        face_alignment.LandmarksType._2D, flip_input=False, device='cpu')
+        face_alignment.LandmarksType._2D, flip_input=False, device=device)
     points = [fa.get_landmarks(I) for I in array]
 
     front256 = get_position(256)
@@ -141,34 +128,3 @@ def ctc_decode(y):
     for i in range(t+1):
         result.append(MyDataset.ctc_arr2txt(y[:i], start=1))
     return result
-
-
-if(__name__ == '__main__'):
-    opt = __import__('options')
-    os.environ['CUDA_VISIBLE_DEVICES'] = opt.gpu
-
-    model = LipNet()
-    model = model.to(device)
-    net = nn.DataParallel(model).to(device)
-
-    if(hasattr(opt, 'weights')):
-        pretrained_dict = torch.load(
-            opt.weights, map_location=torch.device(device))
-        model_dict = model.state_dict()
-        pretrained_dict = {k: v for k, v in pretrained_dict.items(
-        ) if k in model_dict.keys() and v.size() == model_dict[k].size()}
-        missed_params = [k for k, v in model_dict.items(
-        ) if not k in pretrained_dict.keys()]
-        print(
-            'loaded params/tot params:{}/{}'.format(len(pretrained_dict), len(model_dict)))
-        print('miss matched params:{}'.format(missed_params))
-        model_dict.update(pretrained_dict)
-        model.load_state_dict(model_dict)
-
-    video, img_p = load_video(sys.argv[1])
-    y = model(video[None, ...])  # .cuda())
-    txt = ctc_decode(y[0])
-
-    output_video(img_p, txt, sys.argv[2])
-
-    shutil.rmtree(img_p)
